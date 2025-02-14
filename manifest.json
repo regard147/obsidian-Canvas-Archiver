@@ -1,0 +1,10 @@
+{
+	"id": "obsidian-canvas-archiver",
+	"name": "Canvas Archiver",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "Archive blue cards from canvas to Kanban board.",
+	"author": "Canvas Archiver",
+	"authorUrl": "",
+	"isDesktopOnly": false
+}
