@@ -111,27 +111,38 @@ export default class CanvasArchiverPlugin extends Plugin {
                 node.type === 'group'
             );
 
-            // 青いカードを抽出
-            const blueCards = canvasData.nodes.filter((node): node is TextNode =>
-                node.type === 'text' &&
-                node.color === '6' // 6だったら青
-            );
+            // アーカイブ対象のカードを抽出（青いカードまたはチェックボックスがオンのカード）
+            const cardsToArchive = canvasData.nodes.filter((node): node is TextNode => {
+                if (node.type !== 'text') return false;
+                if (node.color === '6') return true; // 青いカード
+                if (typeof node.text !== 'string') return false;
+                return node.text.match(/^\s*-\s*\[x\]/i) !== null; // チェックボックスがオンのカード
+            });
 
-            if (blueCards.length === 0) {
-                new Notice('No blue cards found to archive');
+            // アーカイブ対象のカードIDを記録（後で削除用）
+            const archiveIds = new Set(cardsToArchive.map(card => card.id));
+
+            if (cardsToArchive.length === 0) {
+                new Notice('No cards found to archive');
                 return;
             }
 
             // カードをグループごとに整理
             const groupedCards = new Map<string, TextNode[]>();
-            blueCards.forEach(card => {
+            cardsToArchive.forEach(card => {
                 const groupName = this.findNodeGroup(card, groupNodes);
                 if (!groupedCards.has(groupName)) {
                     groupedCards.set(groupName, []);
                 }
                 const cards = groupedCards.get(groupName);
                 if (cards) {
-                    cards.push(card);
+                    // チェックボックス付きのテキストの場合は、チェックボックスを削除
+                    const cleanedText = card.text.replace(/^\s*-\s*\[x\]\s*/i, '');
+                    const updatedCard = {
+                        ...card,
+                        text: cleanedText
+                    };
+                    cards.push(updatedCard);
                 }
             });
 
@@ -207,7 +218,7 @@ export default class CanvasArchiverPlugin extends Plugin {
 
             // アーカイブしたカードをキャンバスから削除
             const updatedNodes = canvasData.nodes.filter(node =>
-                !(node.type === 'text' && node.color === '6')
+                !archiveIds.has(node.id)
             );
             const updatedCanvasData = {
                 ...canvasData,
@@ -215,7 +226,7 @@ export default class CanvasArchiverPlugin extends Plugin {
             };
             await canvasView.setViewData(JSON.stringify(updatedCanvasData), false);
 
-            new Notice(`Archived ${blueCards.length} cards to ${fileName}`);
+            new Notice(`Archived ${cardsToArchive.length} cards to ${fileName}`);
 
         } catch (error) {
             console.error('Error archiving cards:', error);
