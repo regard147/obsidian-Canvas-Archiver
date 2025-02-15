@@ -1,4 +1,4 @@
-import { Plugin, TFile, Notice, View, TAbstractFile } from 'obsidian';
+import { Plugin, TFile, Notice, View } from 'obsidian';
 
 interface CanvasNode {
     id: string;
@@ -57,7 +57,7 @@ export default class CanvasArchiverPlugin extends Plugin {
         });
 
         // ツールバーにアーカイブボタンを追加
-        const ribbonIconEl = this.addRibbonIcon('archive', 'Archive Blue Cards', async () => {
+        this.addRibbonIcon('archive', 'Archive Blue Cards', async () => {
             const canvasView = this.getActiveCanvasView();
             if (canvasView) {
                 await this.archiveBlueCards(canvasView);
@@ -77,34 +77,43 @@ export default class CanvasArchiverPlugin extends Plugin {
 
     // ノードがグループ内に存在するかチェック
     private isNodeInGroup(node: CanvasNode, group: GroupNode): boolean {
-        return node.x >= group.x && 
-               node.x + node.width <= group.x + group.width &&
-               node.y >= group.y &&
-               node.y + node.height <= group.y + group.height;
+        return node.x >= group.x &&
+            node.x + node.width <= group.x + group.width &&
+            node.y >= group.y &&
+            node.y + node.height <= group.y + group.height;
     }
 
-    // ノードが属するグループを見つける
+    // ノードが属するグループを見つける（最小サイズのグループを優先）
     private findNodeGroup(node: CanvasNode, groups: GroupNode[]): string {
-        for (const group of groups) {
-            if (this.isNodeInGroup(node, group)) {
-                return group.label;
-            }
+        // ノードが所属する全てのグループを見つける
+        const matchingGroups = groups.filter(group => this.isNodeInGroup(node, group));
+
+        if (matchingGroups.length === 0) {
+            return 'Uncategorized';
         }
-        return 'Uncategorized';
+
+        // グループの面積でソートし、最小のものを選択
+        const smallestGroup = matchingGroups.reduce((smallest, current) => {
+            const currentArea = current.width * current.height;
+            const smallestArea = smallest.width * smallest.height;
+            return currentArea < smallestArea ? current : smallest;
+        });
+
+        return smallestGroup.label;
     }
 
     private async archiveBlueCards(canvasView: CanvasViewType): Promise<void> {
         try {
             const canvasData = JSON.parse(canvasView.getViewData()) as CanvasData;
-            
+
             // グループノードを抽出
-            const groupNodes = canvasData.nodes.filter((node): node is GroupNode => 
+            const groupNodes = canvasData.nodes.filter((node): node is GroupNode =>
                 node.type === 'group'
             );
 
             // 青いカードを抽出
-            const blueCards = canvasData.nodes.filter((node): node is TextNode => 
-                node.type === 'text' && 
+            const blueCards = canvasData.nodes.filter((node): node is TextNode =>
+                node.type === 'text' &&
                 node.color === '6' // 6だったら青
             );
 
@@ -151,15 +160,43 @@ export default class CanvasArchiverPlugin extends Plugin {
             }
 
             // 新しいカードを追加
-            for (const [group, cards] of groupedCards) {
-                // グループが存在しない場合は新規作成
-                if (!kanbanContent.includes(`## ${group}\n`)) {
-                    kanbanContent += `\n## ${group}\n\n`;
+            const contentLines = kanbanContent.split('\n');
+            let currentGroup = '';
+            let insertIndex = -1;
+
+            // ファイル内容を解析して各グループの位置を特定
+            contentLines.forEach((line, index) => {
+                if (line.startsWith('## ')) {
+                    currentGroup = line.substring(3).trim();
+                    if (groupedCards.has(currentGroup)) {
+                        insertIndex = index;
+                    }
+                } else if (line.startsWith('## ') || index === contentLines.length - 1) {
+                    // 前のグループが終わった場合、カードを追加
+                    if (insertIndex !== -1 && groupedCards.has(currentGroup)) {
+                        const cards = groupedCards.get(currentGroup);
+                        if (cards) {
+                            const cardLines = cards.map(card =>
+                                `- [ ] ${card.text.replace(/\n/g, '<br>')}`
+                            );
+                            contentLines.splice(insertIndex + 1, 0, ...cardLines);
+                            groupedCards.delete(currentGroup);
+                        }
+                        insertIndex = -1;
+                    }
+                    currentGroup = '';
                 }
+            });
+
+            // 残りの新しいグループを追加
+            for (const [group, cards] of groupedCards) {
+                contentLines.push(`\n## ${group}\n`);
                 cards.forEach(card => {
-                    kanbanContent += `- [ ] ${card.text.replace(/\n/g, '<br>')}\n`;
+                    contentLines.push(`- [ ] ${card.text.replace(/\n/g, '<br>')}`);
                 });
             }
+
+            kanbanContent = contentLines.join('\n');
 
             // ファイルを作成または更新
             if (existingFile instanceof TFile) {
@@ -169,7 +206,7 @@ export default class CanvasArchiverPlugin extends Plugin {
             }
 
             // アーカイブしたカードをキャンバスから削除
-            const updatedNodes = canvasData.nodes.filter(node => 
+            const updatedNodes = canvasData.nodes.filter(node =>
                 !(node.type === 'text' && node.color === '6')
             );
             const updatedCanvasData = {
